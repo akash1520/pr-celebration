@@ -1,0 +1,57 @@
+{
+  "name": "pr-celebration",
+  "displayName": "PR Celebration Animation",
+  "description": "Shows a dancing stick figure when your PR is approved or merged",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.93.1"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "pr-celebration.checkPrStatus",
+        "title": "Check PR Status and Show Animation"
+      },
+      {
+        "command": "pr-celebration.test",
+        "title": "Test PR Celebration Animation"
+      }
+    ],
+    "configuration": {
+      "title": "PR Celebration",
+      "properties": {
+        "prCelebration.githubToken": {
+          "type": "string",
+          "description": "GitHub Personal Access Token with notifications and repo access",
+          "scope": "window"
+        },
+        "prCelebration.notificationCheckIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "description": "Interval in seconds to check for new GitHub notifications",
+          "scope": "window"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "dependencies": {
+    "axios": "^0.24.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.60.0",
+    "eslint": "^8.1.0",
+    "vsce": "^2.5.0"
+  }
+}
