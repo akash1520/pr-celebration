@@ -1,4 +1,3 @@
-// extension.js
 const vscode = require('vscode');
 const axios = require('axios');
 
@@ -15,66 +14,52 @@ function activate(context) {
     statusBarItem.tooltip = "Monitoring PR notifications";
     statusBarItem.show();
 
-    // Register the manual check command
-    let checkPrStatusCommand = vscode.commands.registerCommand('pr-celebration.checkPrStatus', async () => {
-        vscode.window.showInformationMessage('Checking PR notifications...');
-        await checkNotifications();
-    });
-
-    // Register test command for debugging
-    let testCommand = vscode.commands.registerCommand('pr-celebration.test', () => {
-        vscode.window.showInformationMessage('Testing animation');
-        // Show test animation
-        const testPr = {
-            title: "Test PR Animation",
-            number: 123,
-            html_url: "https://github.com/example/repo/pull/123"
-        };
-        showCelebrationAnimation(true, testPr);
-        showCelebrationAnimation(false, testPr);
-    });
+    // Register commands
+    context.subscriptions.push(
+        vscode.commands.registerCommand('pr-celebration.checkPrStatus', () => {
+            vscode.window.showInformationMessage('Checking PR notifications...');
+            checkNotifications(context);
+        }),
+        
+        vscode.commands.registerCommand('pr-celebration.test', () => {
+            vscode.window.showInformationMessage('Testing animation');
+            const testPr = {
+                title: "Test PR Animation",
+                number: 123,
+                html_url: "https://github.com/example/repo/pull/123"
+            };
+            showCelebrationAnimation(true, testPr);
+            showCelebrationAnimation(false, testPr);
+        }),
+        
+        statusBarItem
+    );
     
-    // Setup periodic polling for notifications
+    // Setup periodic polling
     setupNotificationPolling(context);
-
-    context.subscriptions.push(checkPrStatusCommand, statusBarItem, testCommand);
 }
 
-/**
- * Sets up continuous polling for GitHub notifications
- */
 function setupNotificationPolling(context) {
-    // Get notification check interval from settings (default: 60 seconds)
     const config = vscode.workspace.getConfiguration('prCelebration');
     const checkIntervalSeconds = config.get('notificationCheckIntervalSeconds') || 60;
     
     console.log(`Setting up notification polling every ${checkIntervalSeconds} seconds`);
     
-    // Setup the interval for checking notifications
-    const intervalId = setInterval(async () => {
-        await checkNotifications();
-    }, checkIntervalSeconds * 1000);
-    
-    // Store the interval ID so we can clear it if needed
+    const intervalId = setInterval(() => checkNotifications(context), checkIntervalSeconds * 1000);
     context.subscriptions.push({ dispose: () => clearInterval(intervalId) });
     
-    // Also check immediately on startup (with slight delay to let VS Code initialize)
-    setTimeout(() => checkNotifications(), 5000);
+    // Check on startup
+    setTimeout(() => checkNotifications(context), 5000);
 }
 
-/**
- * Checks for new GitHub notifications related to PRs
- */
-async function checkNotifications() {
+async function checkNotifications(context) {
     try {
         console.log('Checking GitHub notifications');
         
-        // Get configuration - only need GitHub token
         const config = vscode.workspace.getConfiguration('prCelebration');
         const githubToken = config.get('githubToken');
         
         if (!githubToken) {
-            // Show this message only once per session
             const hasShownMessage = context.globalState.get('hasShownTokenMessage');
             if (!hasShownMessage) {
                 vscode.window.showInformationMessage(
@@ -90,55 +75,51 @@ async function checkNotifications() {
             return;
         }
 
-        // Get all unread notifications
+        // Get unread notifications
         const notifications = await getGitHubNotifications(githubToken);
         console.log(`Found ${notifications.length} unread notifications`);
         
-        // Filter PR-related notifications
+        // Filter PR notifications
         const prNotifications = notifications.filter(notification => 
             notification.subject && notification.subject.type === 'PullRequest'
         );
         
         console.log(`Found ${prNotifications.length} PR-related notifications`);
         
-        // Process each PR notification
         for (const notification of prNotifications) {
             try {
-                // Extract PR URL
                 const prUrl = notification.subject.url;
                 if (!prUrl) continue;
                 
                 console.log(`Processing notification for PR: ${prUrl}`);
                 
-                // Get PR details from the URL
+                // Get PR details
                 const prDetails = await getPrDetailsFromUrl(githubToken, prUrl);
                 
                 // Get PR comments
                 const commentsUrl = prDetails.comments_url;
                 const comments = await getCommentsFromUrl(githubToken, commentsUrl);
                 
-                // Check for merged status or @robodoo r+ comment
+                // Check for merged status or approval
                 const isMerged = prDetails.merged || false;
                 
+                // Check for approval comments (including self-comments)
                 const hasApproval = comments.some(comment => 
                     comment.body && comment.body.includes('@robodoo r+')
                 );
                 
                 console.log(`PR status - Merged: ${isMerged}, Approval: ${hasApproval}`);
                 
-                // Get the repository and PR number information for display
-                const prHtmlUrl = prDetails.html_url || '';
-                const prNumber = prDetails.number || '';
-                const prTitle = prDetails.title || 'Pull Request';
+                const prInfo = {
+                    title: prDetails.title || 'Pull Request',
+                    number: prDetails.number || '',
+                    html_url: prDetails.html_url || ''
+                };
                 
                 // Show animation based on status
                 if (isMerged || hasApproval) {
                     console.log('Showing celebration animation');
-                    showCelebrationAnimation(true, {
-                        title: prTitle,
-                        number: prNumber,
-                        html_url: prHtmlUrl
-                    });
+                    showCelebrationAnimation(true, prInfo);
                 } else {
                     // Only show sad animation for recent activity
                     const updatedAt = new Date(prDetails.updated_at || Date.now());
@@ -146,85 +127,53 @@ async function checkNotifications() {
                     
                     if (updatedAt > tenMinutesAgo) {
                         console.log('Showing sad animation for recent activity');
-                        showCelebrationAnimation(false, {
-                            title: prTitle,
-                            number: prNumber,
-                            html_url: prHtmlUrl
-                        });
+                        showCelebrationAnimation(false, prInfo);
                     }
                 }
                 
                 // Mark notification as read
                 await markNotificationAsRead(githubToken, notification.id);
-            } catch (notificationError) {
-                console.error('Error processing notification:', notificationError);
-                // Continue with next notification
+            } catch (error) {
+                console.error('Error processing notification:', error);
             }
         }
-        
     } catch (error) {
         console.error('Error checking notifications:', error);
-        // Don't show error message to user for background polling
     }
 }
 
-/**
- * Gets PR details from the GitHub URL
- */
 async function getPrDetailsFromUrl(token, url) {
-    console.log(`Fetching PR details from: ${url}`);
-    
     const response = await axios.get(url, {
         headers: {
             'Authorization': `token ${token}`,
             'Accept': 'application/vnd.github.v3+json'
         }
     });
-    
     return response.data;
 }
 
-/**
- * Gets comments from the GitHub URL
- */
 async function getCommentsFromUrl(token, url) {
-    console.log(`Fetching comments from: ${url}`);
-    
     const response = await axios.get(url, {
         headers: {
             'Authorization': `token ${token}`,
             'Accept': 'application/vnd.github.v3+json'
         }
     });
-    
     return response.data;
 }
 
-/**
- * Gets all unread GitHub notifications
- */
 async function getGitHubNotifications(token) {
-    const url = 'https://api.github.com/notifications';
-    console.log(`Fetching notifications from: ${url}`);
-    
-    const response = await axios.get(url, {
+    const response = await axios.get('https://api.github.com/notifications', {
         headers: {
             'Authorization': `token ${token}`,
             'Accept': 'application/vnd.github.v3+json'
         }
     });
-    
     return response.data;
 }
 
-/**
- * Marks a notification as read
- */
 async function markNotificationAsRead(token, notificationId) {
-    const url = `https://api.github.com/notifications/threads/${notificationId}`;
-    console.log(`Marking notification as read: ${notificationId}`);
-    
-    await axios.patch(url, {}, {
+    await axios.patch(`https://api.github.com/notifications/threads/${notificationId}`, {}, {
         headers: {
             'Authorization': `token ${token}`,
             'Accept': 'application/vnd.github.v3+json'
@@ -233,7 +182,6 @@ async function markNotificationAsRead(token, notificationId) {
 }
 
 function showCelebrationAnimation(isHappy, pr) {
-    // Create and show webview panel
     const panel = vscode.window.createWebviewPanel(
         'prCelebration',
         isHappy ? 'PR Celebration!' : 'PR Status',
@@ -241,18 +189,14 @@ function showCelebrationAnimation(isHappy, pr) {
         { enableScripts: true }
     );
     
-    // Set webview content
     panel.webview.html = getWebviewContent(isHappy, pr);
     
-    // Handle messages from the webview
     panel.webview.onDidReceiveMessage(
         message => {
             if (message.command === 'openExternalLink') {
                 vscode.env.openExternal(vscode.Uri.parse(message.url));
             }
-        },
-        undefined,
-        []
+        }
     );
 }
 
